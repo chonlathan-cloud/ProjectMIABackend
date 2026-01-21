@@ -1,0 +1,224 @@
+from sqlmodel import SQLModel, Field, Column, JSON
+from typing import Optional, Dict, Any, List
+from datetime import datetime
+from pydantic import BaseModel
+import uuid
+
+
+# ============================================================================
+# SQLModel Table Definitions (Database Tables)
+# ============================================================================
+
+class Shop(SQLModel, table=True):
+    """Store/Shop table - represents a business owned by a user."""
+    __tablename__ = "shops"
+    
+    shop_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    owner_uid: str = Field(index=True)  # Firebase UID of the owner
+    name: str
+    tier: str = Field(default="free")  # free, pro, enterprise
+    line_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    ai_settings: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ShopSite(SQLModel, table=True):
+    """Website builder configurations for shops."""
+    __tablename__ = "shop_sites"
+    
+    site_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    config_json: Dict[str, Any] = Field(sa_column=Column(JSON))  # Full site configuration
+    status: str = Field(default="draft")  # draft, published
+    slug: Optional[str] = Field(default=None, unique=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Customer(SQLModel, table=True):
+    """Customer/LINE user profiles linked to shops."""
+    __tablename__ = "customers"
+    
+    customer_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    line_user_id: str = Field(index=True)  # LINE user ID
+    display_name: Optional[str] = None
+    picture_url: Optional[str] = None
+    last_active_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChatEvent(SQLModel, table=True):
+    """Chat message history between customers and shops."""
+    __tablename__ = "chat_events"
+    
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    customer_id: str = Field(foreign_key="customers.customer_id", index=True)
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class Order(SQLModel, table=True):
+    """E-commerce orders."""
+    __tablename__ = "orders"
+    
+    order_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    customer_id: Optional[str] = Field(default=None, foreign_key="customers.customer_id")
+    total_amount: float
+    status: str = Field(default="pending")  # pending, paid, shipped, completed, cancelled
+    payment_proof_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ============================================================================
+# Pydantic Request/Response Schemas
+# ============================================================================
+
+# --- Store Schemas ---
+
+class StoreCreate(BaseModel):
+    """Request schema for creating a new store."""
+    name: str
+
+
+class StoreResponse(BaseModel):
+    """Response schema for store information."""
+    shop_id: str
+    owner_uid: str
+    name: str
+    tier: str
+    line_config: Optional[Dict[str, Any]] = None
+    ai_settings: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+# --- LINE Credentials Schemas ---
+
+class LineCredentials(BaseModel):
+    """Request schema for saving LINE Bot credentials."""
+    channelAccessToken: str
+    channelSecret: str
+    lineUserId: str
+
+
+class LineCredentialsResponse(BaseModel):
+    """Response schema after saving LINE credentials."""
+    success: bool
+    message: str
+
+
+# --- AI Broadcast Schemas ---
+
+class BroadcastPrompt(BaseModel):
+    """Request schema for AI-generated broadcast messages."""
+    content: str  # Natural language prompt
+    storeId: str
+
+
+class BroadcastResponse(BaseModel):
+    """Response schema with generated Flex Message JSON."""
+    flexMessage: Dict[str, Any]
+    preview: str
+
+
+# --- Customer & Chat Schemas ---
+
+class CustomerResponse(BaseModel):
+    """Response schema for customer information."""
+    customer_id: str
+    shop_id: str
+    line_user_id: str
+    display_name: Optional[str]
+    picture_url: Optional[str]
+    last_active_at: datetime
+    last_message: Optional[str] = None  # Joined from chat_events
+    
+    class Config:
+        from_attributes = True
+
+
+class ChatEventResponse(BaseModel):
+    """Response schema for chat messages."""
+    event_id: str
+    shop_id: str
+    customer_id: str
+    role: str
+    content: str
+    timestamp: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class MessageSendRequest(BaseModel):
+    """Request schema for sending a message."""
+    message: str
+
+
+# --- Site Builder Schemas ---
+
+class SiteConfigRequest(BaseModel):
+    """Request schema for updating site configuration."""
+    storeId: str
+    config: Dict[str, Any]  # Full SiteConfigV2 from frontend
+
+
+class SiteConfigResponse(BaseModel):
+    """Response schema for site configuration."""
+    site_id: str
+    shop_id: str
+    config_json: Dict[str, Any]
+    status: str
+    slug: Optional[str]
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+# --- Order Schemas ---
+
+class OrderCreate(BaseModel):
+    """Request schema for creating an order."""
+    shop_id: str
+    customer_id: Optional[str] = None
+    total_amount: float
+    items: List[Dict[str, Any]]  # Product details
+
+
+class OrderResponse(BaseModel):
+    """Response schema for order information."""
+    order_id: str
+    shop_id: str
+    customer_id: Optional[str]
+    total_amount: float
+    status: str
+    payment_proof_url: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class OrderStatusUpdate(BaseModel):
+    """Request schema for updating order status."""
+    status: str  # pending, paid, shipped, completed, cancelled
+
+
+# --- Knowledge Upload Schema ---
+
+class KnowledgeUploadResponse(BaseModel):
+    """Response schema after uploading knowledge files."""
+    success: bool
+    file_url: str
+    message: str
