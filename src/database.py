@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from typing import AsyncGenerator
 from src.config import settings
+from sqlalchemy import text
 
 
 # Create async engine for PostgreSQL
@@ -49,6 +50,8 @@ async def init_db():
     async with engine.begin() as conn:
         # Import all models here to ensure they're registered
         from src.models import Shop, ShopSite, Customer, ChatEvent, Order
+
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         
         # Create all tables
         await conn.run_sync(SQLModel.metadata.create_all)
