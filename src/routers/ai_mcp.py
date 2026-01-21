@@ -3,11 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from src.database import get_session
 from src.security import get_current_user
-from src.models import Shop, BroadcastPrompt, BroadcastResponse, KnowledgeUploadResponse, Product
+# ✅ เพิ่ม ShopKnowledge เข้ามาใน Import
+from src.models import Shop, BroadcastPrompt, BroadcastResponse, KnowledgeUploadResponse, Product, ShopKnowledge
 from src.services.ai_service import ai_service
 from src.services.storage_service import storage_service
 from typing import Dict
-
+import uuid # ✅ เพิ่ม uuid สำหรับ gen id
 
 router = APIRouter(tags=["AI & MCP"])
 
@@ -17,38 +18,17 @@ async def generate_broadcast_message(
     user: Dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ) -> BroadcastResponse:
-    """
-    Generate LINE Flex Message from natural language prompt using AI.
-    
-    Args:
-        prompt_data: User's marketing prompt and store ID
-        
-    Returns:
-        Generated Flex Message JSON
-        
-    Raises:
-        403: User doesn't own this store
-        404: Store not found
-    """
-    # Verify shop ownership
+    # ... (ส่วนตรวจสอบสิทธิ์ Shop เหมือนเดิม ถูกต้องแล้ว) ...
     shop_statement = select(Shop).where(Shop.shop_id == prompt_data.storeId)
     shop_result = await session.execute(shop_statement)
     shop = shop_result.scalar_one_or_none()
     
     if not shop:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Store not found"
-        )
-    
+        raise HTTPException(status_code=404, detail="Store not found")
     if shop.owner_uid != user["uid"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to access this store"
-        )
-    
-    # TODO: Fetch products from database for context
-    # For now, using mock products
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # ✅ ส่วนดึงสินค้าจริง (ถูกต้องแล้ว)
     product_statement = select(Product).where(Product.shop_id == prompt_data.storeId)
     product_result = await session.execute(product_statement)
     db_products = product_result.scalars().all()
@@ -64,22 +44,16 @@ async def generate_broadcast_message(
     ]
     
     try:
-        # ส่งสินค้าจริงเข้า AI
         flex_message = await ai_service.generate_line_flex_message(
             user_prompt=prompt_data.content,
             products=products_context 
         )
-        
         return BroadcastResponse(
             flexMessage=flex_message,
             preview="AI-generated Flex Message based on real inventory"
         )
-        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"AI generation failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)
@@ -89,86 +63,56 @@ async def upload_knowledge_file(
     user: Dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
 ) -> KnowledgeUploadResponse:
-    """
-    Upload file for RAG (Retrieval-Augmented Generation) knowledge base.
-    
-    Supports PDF and image files. Extracts text, generates embeddings,
-    and stores in the knowledge base.
-    
-    Args:
-        file: Uploaded file (PDF or image)
-        storeId: Store ID to associate knowledge with
-        
-    Returns:
-        Upload success response with file URL
-        
-    Raises:
-        400: Invalid file type
-        403: User doesn't own this store
-    """
-    # Verify shop ownership if storeId provided
+    # ... (ส่วนตรวจสอบสิทธิ์ Shop เหมือนเดิม) ...
     if storeId:
         shop_statement = select(Shop).where(Shop.shop_id == storeId)
         shop_result = await session.execute(shop_statement)
         shop = shop_result.scalar_one_or_none()
-        
-        if not shop:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Store not found"
-            )
-        
-        if shop.owner_uid != user["uid"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to access this store"
-            )
-    
+        if not shop or shop.owner_uid != user["uid"]:
+             raise HTTPException(status_code=403, detail="Permission denied")
+
     # Validate file type
-    allowed_types = [
-        "application/pdf",
-        "image/jpeg",
-        "image/png",
-        "image/jpg"
-    ]
-    
+    allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/jpg"]
     if file.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
-        )
+        raise HTTPException(status_code=400, detail="Invalid file type")
     
     try:
-        # Read file content
+        # 1. Upload & Extract (เหมือนเดิม)
         file_content = await file.read()
-        
-        # Upload to GCS
         blob_name, public_url = await storage_service.upload_file(
             file_content=file_content,
             filename=file.filename,
             content_type=file.content_type
         )
         
-        # Extract text from document
         extracted_text = await ai_service.extract_text_from_document(
             file_content=file_content,
             mime_type=file.content_type
         )
         
-        # Generate embeddings
+        # 2. Generate Embedding (เหมือนเดิม)
         embeddings = await ai_service.generate_embeddings(extracted_text)
         
-        # TODO: Store embeddings in database (shop_knowledge table)
-        # For now, just return success
+        # 3. ✅ Save ลง Database (ส่วนที่เพิ่มเข้ามา)
+        new_knowledge = ShopKnowledge(
+            doc_id=str(uuid.uuid4()),
+            shop_id=storeId,
+            type="file_upload",
+            content=extracted_text,  # เก็บข้อความไว้ให้ AI อ่าน
+            embedding=embeddings     # เก็บ Vector ไว้ให้ AI ค้นหา
+        )
+        
+        session.add(new_knowledge)
+        await session.commit()
         
         return KnowledgeUploadResponse(
             success=True,
             file_url=public_url,
-            message=f"File uploaded and processed successfully. Extracted {len(extracted_text)} characters."
+            message=f"Success! Extracted {len(extracted_text)} chars and saved to knowledge base."
         )
         
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"File processing failed: {str(e)}"
+            detail=f"Processing failed: {str(e)}"
         )
