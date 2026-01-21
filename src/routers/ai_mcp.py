@@ -3,14 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from src.database import get_session
 from src.security import get_current_user
-from src.models import Shop, BroadcastPrompt, BroadcastResponse, KnowledgeUploadResponse
+from src.models import Shop, BroadcastPrompt, BroadcastResponse, KnowledgeUploadResponse, Product
 from src.services.ai_service import ai_service
 from src.services.storage_service import storage_service
 from typing import Dict
 
 
 router = APIRouter(tags=["AI & MCP"])
-
 
 @router.post("/mcp/line/broadcast/ai", response_model=BroadcastResponse)
 async def generate_broadcast_message(
@@ -50,22 +49,30 @@ async def generate_broadcast_message(
     
     # TODO: Fetch products from database for context
     # For now, using mock products
-    products = [
-        {"name": "Coffee", "price": 50},
-        {"name": "Orange Juice", "price": 40},
-        {"name": "Sandwich", "price": 60}
+    product_statement = select(Product).where(Product.shop_id == prompt_data.storeId)
+    product_result = await session.execute(product_statement)
+    db_products = product_result.scalars().all()
+    
+    products_context = [
+        {
+            "name": p.name, 
+            "price": p.price, 
+            "stock": p.stock,
+            "details": p.attributes 
+        } 
+        for p in db_products
     ]
     
     try:
-        # Generate Flex Message using AI
+        # ส่งสินค้าจริงเข้า AI
         flex_message = await ai_service.generate_line_flex_message(
             user_prompt=prompt_data.content,
-            products=products
+            products=products_context 
         )
         
         return BroadcastResponse(
             flexMessage=flex_message,
-            preview="AI-generated Flex Message"
+            preview="AI-generated Flex Message based on real inventory"
         )
         
     except Exception as e:

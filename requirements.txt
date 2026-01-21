@@ -10,3 +10,4 @@ google-cloud-aiplatform==1.38.0
 line-bot-sdk==3.21.0
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
+pgvector==0.2.4

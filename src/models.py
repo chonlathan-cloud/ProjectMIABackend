@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field, Column, JSON
+from pgvector.sqlmodel import Vector
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel
@@ -74,7 +75,38 @@ class Order(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+class Product(SQLModel, table=True):
+    __tablename__ = "products"
+    
+    product_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    
+    name: str
+    price: float = Field(default=0.0)
+    stock: int = Field(default=0)
+    is_active: bool = Field(default=True)
+    
+    # Custom Fields จาก Web Builder
+    attributes: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    
+    # AI Search Data
+    description_text: Optional[str] = None
+    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+class ShopKnowledge(SQLModel, table=True):
+    __tablename__ = "shop_knowledge"
+    
+    doc_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    
+    type: str # 'QA', 'POLICY', 'PDF'
+    content: str
+    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
+    
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 # ============================================================================
 # Pydantic Request/Response Schemas
 # ============================================================================
