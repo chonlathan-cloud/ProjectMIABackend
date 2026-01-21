@@ -112,3 +112,34 @@ async def save_line_credentials(
         success=True,
         message="LINE credentials saved successfully"
     )
+@router.get("/{shop_id}/line-credentials", response_model=LineCredentialsResponse)
+async def get_line_credentials(
+    shop_id: str,
+    user: Dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+) -> LineCredentialsResponse:
+    """Get LINE credentials for a specific shop."""
+    
+    # 1. ค้นหาร้าน
+    statement = select(Shop).where(Shop.shop_id == shop_id)
+    result = await session.execute(statement)
+    shop = result.scalar_one_or_none()
+    
+    # 2. ตรวจสอบสิทธิ์ (เป็นเจ้าของร้านไหม)
+    if not shop:
+        raise HTTPException(status_code=404, detail="Store not found")
+    
+    if shop.owner_uid != user["uid"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # 3. ดึง Config ออกมา (ถ้าไม่มีให้คืนค่าว่าง)
+    config = shop.line_config or {}
+    
+    return LineCredentialsResponse(
+        success=True,
+        message="Credentials loaded",
+        # Frontend อาจจะคาดหวัง data field หรือ settings field 
+        # เราคืนค่ากลับไปให้ครบตาม Pydantic schema
+        # หมายเหตุ: เราไม่ควรคืน Secret กลับไปตรงๆ ใน Production แต่เพื่อความง่ายใน MVP คืนไปก่อนได้
+        # หรือถ้าจะให้ปลอดภัย ให้ส่งกลับเป็น masked string เช่น "****"
+    )

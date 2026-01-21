@@ -14,14 +14,18 @@ class Settings(BaseSettings):
     pubsub_topic_incoming: str = "line-incoming-events"
     pubsub_subscription_incoming: str = "line-incoming-events-sub"
     gcs_bucket_name: str
-    
+
     # Firebase
     firebase_credentials_path: str
     
     # API Configuration
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     api_prefix: str = "/api"
-    
+
+    # Debug
+    debug: bool = True
+    port: int = 8000
+
     # Vertex AI
     vertex_ai_location: str = "us-central1"
     vertex_ai_model: str = "gemini-1.5-pro"

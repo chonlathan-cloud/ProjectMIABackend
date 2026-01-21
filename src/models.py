@@ -1,5 +1,5 @@
 from sqlmodel import SQLModel, Field, Column, JSON
-from pgvector.sqlmodel import Vector
+from pgvector.sqlalchemy import Vector
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel
