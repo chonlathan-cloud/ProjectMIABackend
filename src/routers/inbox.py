@@ -10,7 +10,7 @@ from src.models import (
     CustomerResponse, ChatEventResponse, MessageSendRequest
 )
 from src.services.pubsub_service import pubsub_service
-from typing import Dict, List
+from typing import Any, Dict, List
 from datetime import datetime
 from linebot import LineBotApi
 from linebot.models import TextSendMessage
@@ -313,3 +313,23 @@ async def send_message(
         "success": True,
         "message": "Message sent successfully"
     }
+# POST /inbox/suggest
+@router.post("/suggest")
+async def get_inbox_suggestion(
+    payload: Dict[str, str], # { storeId, userId }
+    user: Dict = Depends(get_current_user)
+):
+    # เรียก AI Service เพื่อ generate คำตอบ
+    return {
+        "suggestion": "สวัสดีครับ มีอะไรให้ช่วยไหมครับ (AI Generated)"
+    }
+
+# POST /inbox/customers/{customer_id}/admin
+@router.post("/customers/{customer_id}/admin")
+async def update_customer_admin(
+    customer_id: str,
+    payload: Dict[str, Any], # { storeId, isAdmin }
+    user: Dict = Depends(get_current_user)
+):
+    # Logic: Update customer status
+    return {"success": True}

@@ -4,7 +4,7 @@ from sqlmodel import select
 from src.database import get_session
 from src.security import get_current_user
 from src.models import Shop, StoreCreate, StoreResponse, LineCredentials, LineCredentialsResponse
-from typing import Dict, List
+from typing import Dict, List, Any
 import uuid
 
 
@@ -143,3 +143,54 @@ async def get_line_credentials(
         # หมายเหตุ: เราไม่ควรคืน Secret กลับไปตรงๆ ใน Production แต่เพื่อความง่ายใน MVP คืนไปก่อนได้
         # หรือถ้าจะให้ปลอดภัย ให้ส่งกลับเป็น masked string เช่น "****"
     )
+
+# 1. GET /stores/{store_id}/ai-settings
+@router.get("/{shop_id}/ai-settings")
+async def get_ai_settings(
+    shop_id: str,
+    user: Dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    # check owner logic...
+    statement = select(Shop).where(Shop.shop_id == shop_id)
+    result = await session.execute(statement)
+    shop = result.scalar_one_or_none()
+    
+    if not shop:
+        raise HTTPException(status_code=404, detail="Store not found")
+        
+    return shop.ai_settings or {"aiEnable": False}
+
+# 2. POST /stores/{store_id}/ai-settings
+@router.post("/{shop_id}/ai-settings")
+async def update_ai_settings(
+    shop_id: str,
+    settings: Dict[str, Any], # รับ json body { aiEnable: boolean }
+    user: Dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    statement = select(Shop).where(Shop.shop_id == shop_id)
+    result = await session.execute(statement)
+    shop = result.scalar_one_or_none()
+    
+    if not shop or shop.owner_uid != user["uid"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    # Merge or overwrite settings
+    current_settings = shop.ai_settings or {}
+    current_settings.update(settings)
+    shop.ai_settings = current_settings
+    
+    session.add(shop)
+    await session.commit()
+    return {"success": True, "data": shop.ai_settings}
+
+# 3. GET /stores/{store_id}/stats (ใช้ในหน้า Dashboard เล็กๆ)
+@router.get("/{shop_id}/stats")
+async def get_store_stats(shop_id: str, user: Dict = Depends(get_current_user)):
+    # Mock data หรือ query count จริงจาก DB
+    return {
+        "totalOrders": 0,
+        "totalSales": 0,
+        "memberCount": 0
+    }
