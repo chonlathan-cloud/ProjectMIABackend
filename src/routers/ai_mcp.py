@@ -4,15 +4,26 @@ from sqlmodel import select
 from src.database import get_session
 from src.security import get_current_user
 # ✅ เพิ่ม ShopKnowledge เข้ามาใน Import
-from src.models import Shop, BroadcastPrompt, BroadcastResponse, KnowledgeUploadResponse, Product, ShopKnowledge
+from src.models import (
+    Shop,
+    BroadcastPrompt,
+    BroadcastResponse,
+    KnowledgeUploadResponse,
+    LineImageUploadRequest,
+    LineImageUploadResponse,
+    Product,
+    ShopKnowledge,
+)
 from src.services.ai_service import ai_service
 from src.services.storage_service import storage_service
 from typing import Dict
 import uuid # ✅ เพิ่ม uuid สำหรับ gen id
+import base64
 
 router = APIRouter(tags=["AI & MCP"])
 
 @router.post("/mcp/line/broadcast/ai", response_model=BroadcastResponse)
+@router.post("/api/mcp/line/broadcast/ai", response_model=BroadcastResponse)
 async def generate_broadcast_message(
     prompt_data: BroadcastPrompt,
     user: Dict = Depends(get_current_user),
@@ -54,6 +65,55 @@ async def generate_broadcast_message(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/mcp/line/upload-image", response_model=LineImageUploadResponse)
+@router.post("/api/mcp/line/upload-image", response_model=LineImageUploadResponse)
+async def upload_line_image(
+    payload: LineImageUploadRequest,
+    user: Dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+) -> LineImageUploadResponse:
+    # Verify shop ownership
+    shop_statement = select(Shop).where(Shop.shop_id == payload.storeId)
+    shop_result = await session.execute(shop_statement)
+    shop = shop_result.scalar_one_or_none()
+
+    if not shop:
+        raise HTTPException(status_code=404, detail="Store not found")
+    if shop.owner_uid != user["uid"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
+    if payload.contentType not in allowed_types:
+        raise HTTPException(status_code=400, detail="Invalid image type")
+
+    try:
+        file_content = base64.b64decode(payload.dataBase64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 data")
+
+    try:
+        blob_name, public_url = await storage_service.upload_file(
+            file_content=file_content,
+            filename=payload.fileName,
+            content_type=payload.contentType,
+            folder_prefix=shop.name
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"File upload failed: {str(e)}"
+        )
+
+    return LineImageUploadResponse(
+        success=True,
+        message="Image uploaded",
+        data={
+            "url": public_url,
+            "blobName": blob_name
+        }
+    )
 
 
 @router.post("/api/knowledge/upload", response_model=KnowledgeUploadResponse)

@@ -1,8 +1,9 @@
 from google.cloud import storage
 from src.config import settings
-from typing import Tuple
+from typing import Tuple, Optional
 import uuid
 from datetime import datetime
+from urllib.parse import quote
 
 
 class StorageService:
@@ -17,7 +18,8 @@ class StorageService:
         self,
         file_content: bytes,
         filename: str,
-        content_type: str
+        content_type: str,
+        folder_prefix: Optional[str] = None
     ) -> Tuple[str, str]:
         """
         Upload a file to Google Cloud Storage.
@@ -31,13 +33,22 @@ class StorageService:
             Tuple of (blob_name, public_url)
         """
         try:
+            # Normalize optional folder segment (avoid path traversal)
+            safe_folder = None
+            if folder_prefix:
+                normalized = folder_prefix.strip().replace("/", "-").replace("\\", "-")
+                safe_folder = normalized or None
+
             # Generate unique filename
             file_extension = filename.split('.')[-1] if '.' in filename else 'bin'
             unique_filename = f"{uuid.uuid4()}.{file_extension}"
             
             # Create blob path with timestamp folder
             timestamp = datetime.utcnow().strftime("%Y/%m/%d")
-            blob_name = f"uploads/{timestamp}/{unique_filename}"
+            base_prefix = "uploads"
+            if safe_folder:
+                base_prefix = f"{base_prefix}/{safe_folder}"
+            blob_name = f"{base_prefix}/{timestamp}/{unique_filename}"
             
             # Create blob
             blob = self.bucket.blob(blob_name)
@@ -52,7 +63,10 @@ class StorageService:
             # blob.make_public()
             
             # Get public URL
-            public_url = f"https://storage.googleapis.com/{self.bucket_name}/{blob_name}"
+            public_url = (
+                f"https://storage.googleapis.com/{self.bucket_name}/"
+                f"{quote(blob_name, safe='/')}"
+            )
             
             return blob_name, public_url
             

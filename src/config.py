@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     vertex_ai_location: str = "us-central1"
     vertex_ai_model: str = "gemini-1.5-pro"
     vertex_ai_embedding_model: str = "text-embedding-004"
+
+    # JWT
+    jwt_secret: str
+    jwt_issuer: str = "mia-core"
+    jwt_exp_minutes: int = 60
+
+    # LINE Login
+    line_login_channel_id: str = ""
+    line_login_channel_secret: str = ""
+    line_login_redirect_uri: str = ""
+    frontend_base_url: str = ""
     
     @property
     def cors_origins_list(self) -> List[str]:

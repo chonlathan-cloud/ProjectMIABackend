@@ -19,6 +19,7 @@ class Shop(SQLModel, table=True):
     name: str
     tier: str = Field(default="free")  # free, pro, enterprise
     line_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    business_profile: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     ai_settings: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -60,6 +61,21 @@ class ChatEvent(SQLModel, table=True):
     role: str  # "user" or "assistant"
     content: str
     timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class OnboardingSession(SQLModel, table=True):
+    """Onboarding/intake session for collecting Zone1/Zone2 data."""
+    __tablename__ = "onboarding_sessions"
+
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    line_user_id: str = Field(index=True)
+    status: str = Field(default="zone1_collecting")
+    zone: int = Field(default=1)
+    current_step: int = Field(default=1)
+    collected_data: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Order(SQLModel, table=True):
@@ -107,6 +123,44 @@ class ShopKnowledge(SQLModel, table=True):
     embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ShopMember(SQLModel, table=True):
+    """Shop members for multi-user access (owner/staff)."""
+    __tablename__ = "shop_members"
+
+    member_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    user_id: str = Field(index=True)
+    role: str = Field(default="staff")  # owner | staff
+    auth_provider: str = Field(default="firebase")  # firebase | line
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AIActionDraft(SQLModel, table=True):
+    """Draft actions awaiting user confirmation."""
+    __tablename__ = "ai_action_drafts"
+
+    draft_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    user_id: str = Field(index=True)
+    action_type: str
+    payload: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AIActionLog(SQLModel, table=True):
+    """Audit log for AI write actions."""
+    __tablename__ = "ai_action_logs"
+
+    action_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    shop_id: str = Field(foreign_key="shops.shop_id", index=True)
+    user_id: str = Field(index=True)
+    action_type: str
+    status: str  # draft | confirmed | rejected | failed
+    payload: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 # ============================================================================
 # Pydantic Request/Response Schemas
 # ============================================================================
@@ -140,12 +194,16 @@ class LineCredentials(BaseModel):
     channelAccessToken: str
     channelSecret: str
     lineUserId: str
+    displayName: Optional[str] = None
+    basicId: Optional[str] = None
 
 
 class LineCredentialsResponse(BaseModel):
     """Response schema after saving LINE credentials."""
     success: bool
     message: str
+    data: Optional[Dict[str, Any]] = None
+    settings: Optional[Dict[str, Any]] = None
 
 
 # --- AI Broadcast Schemas ---
@@ -254,3 +312,20 @@ class KnowledgeUploadResponse(BaseModel):
     success: bool
     file_url: str
     message: str
+
+
+# --- LINE Image Upload Schema ---
+
+class LineImageUploadRequest(BaseModel):
+    """Request schema for uploading images to storage (from LINE tools)."""
+    storeId: str
+    fileName: str
+    contentType: str
+    dataBase64: str
+
+
+class LineImageUploadResponse(BaseModel):
+    """Response schema after uploading image to storage."""
+    success: bool
+    message: str
+    data: Dict[str, Any]

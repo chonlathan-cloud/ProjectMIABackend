@@ -1,21 +1,52 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
+from sqlalchemy import func, desc
+from datetime import datetime, timedelta
 from src.database import get_session
 from src.security import get_current_user
-from src.models import Shop, StoreCreate, StoreResponse, LineCredentials, LineCredentialsResponse
-from typing import Dict, List, Any
+from src.models import (
+    Shop,
+    StoreCreate,
+    LineCredentials,
+    LineCredentialsResponse,
+    Customer,
+    ChatEvent,
+    Product,
+)
+from typing import Dict, Any
 import uuid
 
 
 router = APIRouter(prefix="/stores", tags=["Stores"])
 
 
-@router.get("", response_model=List[StoreResponse])
+def serialize_store(shop: Shop) -> Dict[str, Any]:
+    line_config = shop.line_config or {}
+    line_account_id = line_config.get("lineUserId") or line_config.get("botBasicId")
+
+    return {
+        "id": shop.shop_id,
+        "shop_id": shop.shop_id,
+        "name": shop.name,
+        "tier": shop.tier,
+        "lineConfig": line_config,
+        "line_config": line_config,
+        "lineAccountId": line_account_id,
+        "aiSettings": shop.ai_settings,
+        "ai_settings": shop.ai_settings,
+        "createdAt": shop.created_at,
+        "created_at": shop.created_at,
+        "updatedAt": shop.updated_at,
+        "updated_at": shop.updated_at,
+    }
+
+
+@router.get("")
 async def get_user_stores(
     user: Dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
-) -> List[Shop]:
+) -> Dict[str, Any]:
     """
     Get all stores owned by the current user.
     
@@ -26,16 +57,21 @@ async def get_user_stores(
     statement = select(Shop).where(Shop.owner_uid == user["uid"])
     result = await session.execute(statement)
     stores = result.scalars().all()
-    
-    return stores
+    payload = [serialize_store(store) for store in stores]
+
+    return {
+        "success": True,
+        "data": {"stores": payload},
+        "stores": payload
+    }
 
 
-@router.post("", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_store(
     store_data: StoreCreate,
     user: Dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
-) -> Shop:
+) -> Dict[str, Any]:
     """
     Create a new store for the current user.
     
@@ -57,7 +93,12 @@ async def create_store(
     await session.commit()
     await session.refresh(new_shop)
     
-    return new_shop
+    payload = serialize_store(new_shop)
+    return {
+        "success": True,
+        "data": {"store": payload},
+        "store": payload
+    }
 
 
 @router.post("/{shop_id}/line-credentials", response_model=LineCredentialsResponse)
@@ -102,7 +143,10 @@ async def save_line_credentials(
     shop.line_config = {
         "channelAccessToken": credentials.channelAccessToken,
         "channelSecret": credentials.channelSecret,
-        "lineUserId": credentials.lineUserId
+        "lineUserId": credentials.lineUserId,
+        "displayName": credentials.displayName,
+        "basicId": credentials.basicId,
+        "botBasicId": credentials.basicId
     }
     
     session.add(shop)
@@ -110,7 +154,9 @@ async def save_line_credentials(
     
     return LineCredentialsResponse(
         success=True,
-        message="LINE credentials saved successfully"
+        message="LINE credentials saved successfully",
+        data=shop.line_config,
+        settings=shop.line_config
     )
 @router.get("/{shop_id}/line-credentials", response_model=LineCredentialsResponse)
 async def get_line_credentials(
@@ -138,10 +184,8 @@ async def get_line_credentials(
     return LineCredentialsResponse(
         success=True,
         message="Credentials loaded",
-        # Frontend อาจจะคาดหวัง data field หรือ settings field 
-        # เราคืนค่ากลับไปให้ครบตาม Pydantic schema
-        # หมายเหตุ: เราไม่ควรคืน Secret กลับไปตรงๆ ใน Production แต่เพื่อความง่ายใน MVP คืนไปก่อนได้
-        # หรือถ้าจะให้ปลอดภัย ให้ส่งกลับเป็น masked string เช่น "****"
+        data=config,
+        settings=config
     )
 
 # 1. GET /stores/{store_id}/ai-settings
@@ -187,10 +231,98 @@ async def update_ai_settings(
 
 # 3. GET /stores/{store_id}/stats (ใช้ในหน้า Dashboard เล็กๆ)
 @router.get("/{shop_id}/stats")
-async def get_store_stats(shop_id: str, user: Dict = Depends(get_current_user)):
-    # Mock data หรือ query count จริงจาก DB
+async def get_store_stats(
+    shop_id: str,
+    user: Dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    shop_stmt = select(Shop).where(Shop.shop_id == shop_id)
+    shop_result = await session.execute(shop_stmt)
+    shop = shop_result.scalar_one_or_none()
+
+    if not shop:
+        raise HTTPException(status_code=404, detail="Store not found")
+
+    if shop.owner_uid != user["uid"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    # Count total customers for shop
+    customer_stmt = select(func.count()).select_from(Customer).where(
+        Customer.shop_id == shop_id
+    )
+    customer_result = await session.execute(customer_stmt)
+    customer_count = customer_result.scalar_one() or 0
+
+    # Count today's messages for shop (UTC day)
+    now = datetime.utcnow()
+    start_of_day = datetime(now.year, now.month, now.day)
+    end_of_day = start_of_day + timedelta(days=1)
+
+    message_stmt = select(func.count()).select_from(ChatEvent).where(
+        ChatEvent.shop_id == shop_id,
+        ChatEvent.timestamp >= start_of_day,
+        ChatEvent.timestamp < end_of_day,
+    )
+    message_result = await session.execute(message_stmt)
+    message_count = message_result.scalar_one() or 0
+
     return {
-        "totalOrders": 0,
-        "totalSales": 0,
-        "memberCount": 0
+        "success": True,
+        "stats": {
+            "customers": customer_count,
+            "messages": message_count
+        }
+    }
+
+
+@router.get("/{shop_id}/onboarding")
+async def get_onboarding_profile(
+    shop_id: str,
+    user: Dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session)
+):
+    shop_stmt = select(Shop).where(Shop.shop_id == shop_id)
+    shop_result = await session.execute(shop_stmt)
+    shop = shop_result.scalar_one_or_none()
+
+    if not shop:
+        raise HTTPException(status_code=404, detail="Store not found")
+
+    if shop.owner_uid != user["uid"]:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    profile = shop.business_profile or {}
+
+    product_stmt = (
+        select(Product)
+        .where(Product.shop_id == shop_id)
+        .order_by(desc(Product.created_at))
+        .limit(1)
+    )
+    product_result = await session.execute(product_stmt)
+    product = product_result.scalar_one_or_none()
+
+    first_product = None
+    if product:
+        image_urls = None
+        image_url = None
+        if product.attributes:
+            image_urls = product.attributes.get("imageUrls")
+            image_url = product.attributes.get("imageUrl")
+        first_product = {
+            "product_id": product.product_id,
+            "name": product.name,
+            "price": product.price,
+            "description": product.description_text,
+            "imageUrl": image_url,
+            "imageUrls": image_urls,
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "shopName": shop.name,
+            "businessProfile": profile,
+            "firstProduct": first_product,
+        },
     }

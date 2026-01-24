@@ -11,3 +11,5 @@ line-bot-sdk==3.21.0
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
 pgvector==0.2.4
+PyJWT==2.8.0
+httpx==0.26.0
