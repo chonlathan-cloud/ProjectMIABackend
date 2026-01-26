@@ -5,7 +5,7 @@ from src.database import get_session
 from src.security import get_current_user, get_auth_context
 from src.models import ShopSite, Shop, SiteConfigRequest, SiteConfigResponse, ShopPublication, ShopMember
 from typing import Dict, Optional, Any
-from datetime import datetime, timezone
+from datetime import datetime
 from pydantic import BaseModel
 import uuid
 
@@ -194,7 +194,7 @@ async def get_publish_status(
     result = await session.execute(statement)
     publication = result.scalar_one_or_none()
     published = bool(publication and publication.is_published)
-    published_at = publication.published_at.isoformat().replace("+00:00", "Z") if publication and publication.published_at else None
+    published_at = publication.published_at.isoformat() + "Z" if publication and publication.published_at else None
 
     return {
         "success": True,
@@ -213,7 +213,7 @@ async def publish_site(
     store_id = payload.storeId
     await _ensure_shop_access(session, store_id, auth_ctx)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     statement = select(ShopPublication).where(ShopPublication.shop_id == store_id)
     result = await session.execute(statement)
     publication = result.scalar_one_or_none()
@@ -239,5 +239,5 @@ async def publish_site(
         "success": True,
         "shopId": store_id,
         "published": True,
-        "publishedAt": publication.published_at.isoformat().replace("+00:00", "Z"),
+        "publishedAt": publication.published_at.isoformat() + "Z",
     }
