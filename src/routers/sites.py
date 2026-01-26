@@ -73,12 +73,12 @@ async def _ensure_shop_access(
     return shop
 
 
-@router.get("", response_model=Optional[SiteConfigResponse])
+@router.get("")
 async def get_site_config(
     storeId: str = Query(..., description="Store ID"),
     user: Dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session)
-) -> Optional[ShopSite]:
+) -> Dict[str, Any]:
     """
     Get the latest site configuration for a store.
     
@@ -116,8 +116,32 @@ async def get_site_config(
     )
     result = await session.execute(statement)
     site = result.scalar_one_or_none()
-    
-    return site
+
+    publication_stmt = select(ShopPublication).where(ShopPublication.shop_id == storeId)
+    publication_result = await session.execute(publication_stmt)
+    publication = publication_result.scalar_one_or_none()
+
+    draft = None
+    if site:
+        draft = {
+            "config": site.config_json,
+            "updatedAt": site.updated_at.isoformat() + "Z",
+        }
+
+    published = None
+    if publication and publication.is_published:
+        published = {
+            "config": site.config_json if site else None,
+            "slug": storeId,
+            "version": 1,
+            "publishedAt": publication.published_at.isoformat() + "Z" if publication.published_at else None,
+        }
+
+    return {
+        "success": True,
+        "draft": draft,
+        "published": published,
+    }
 
 
 @router.put("/draft", response_model=SiteConfigResponse)

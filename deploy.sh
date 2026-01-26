@@ -13,6 +13,9 @@ ENV_FILE="${ENV_FILE:-}"
 SECRET_VARS="${SECRET_VARS:-}"
 SECRET_FILE="${SECRET_FILE:-.env.secrets}"
 CLOUDSQL_INSTANCE="${CLOUDSQL_INSTANCE:-}"
+ENV_VARS_FILE=""
+ENV_KEYS=()
+ENV_VALUES=()
 
 trim() {
   local s="$1"
@@ -21,21 +24,85 @@ trim() {
   printf '%s' "$s"
 }
 
+find_env_index() {
+  local key="$1"
+  for i in "${!ENV_KEYS[@]}"; do
+    if [[ "${ENV_KEYS[$i]}" == "${key}" ]]; then
+      printf '%s' "${i}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+set_env_var() {
+  local key="$1"
+  local value="$2"
+  local override="${3:-true}"
+  local idx
+
+  if idx="$(find_env_index "${key}")"; then
+    if [[ "${override}" == "true" ]]; then
+      ENV_VALUES[$idx]="${value}"
+    fi
+    return 0
+  fi
+
+  ENV_KEYS+=("${key}")
+  ENV_VALUES+=("${value}")
+}
+
+parse_env_vars_string() {
+  local input="$1"
+  local buf=""
+  local esc=0
+  local -a parts=()
+
+  for ((i=0; i<${#input}; i++)); do
+    local ch="${input:i:1}"
+    if ((esc)); then
+      buf+="${ch}"
+      esc=0
+      continue
+    fi
+    if [[ "${ch}" == "\\" ]]; then
+      esc=1
+      continue
+    fi
+    if [[ "${ch}" == "," ]]; then
+      parts+=("${buf}")
+      buf=""
+      continue
+    fi
+    buf+="${ch}"
+  done
+  parts+=("${buf}")
+
+  for pair in "${parts[@]}"; do
+    local key="${pair%%=*}"
+    local value="${pair#*=}"
+    key="$(trim "${key}")"
+    value="$(trim "${value}")"
+    [[ -z "${key}" || "${key}" == "${value}" ]] && continue
+
+    value="${value//\\,/,}"
+
+    if [[ "${key}" == "PORT" ]]; then
+      continue
+    fi
+    if [[ "${key}" == "CLOUDSQL_INSTANCE" ]]; then
+      if [[ -z "${CLOUDSQL_INSTANCE}" ]]; then
+        CLOUDSQL_INSTANCE="${value}"
+      fi
+      continue
+    fi
+
+    set_env_var "${key}" "${value}" "true"
+  done
+}
+
 load_env_file() {
   local file_path="$1"
-  local -a env_pairs=()
-  local existing_keys="|"
-
-  if [[ -n "${ENV_VARS}" ]]; then
-    IFS=',' read -r -a env_pairs <<< "${ENV_VARS}"
-    for pair in "${env_pairs[@]}"; do
-      local key="${pair%%=*}"
-      key="$(trim "${key}")"
-      if [[ -n "${key}" ]]; then
-        existing_keys="${existing_keys}${key}|"
-      fi
-    done
-  fi
 
   while IFS= read -r line || [[ -n "${line}" ]]; do
     line="$(trim "${line}")"
@@ -58,19 +125,12 @@ load_env_file() {
       continue
     fi
 
-    if [[ "${existing_keys}" == *"|${key}|"* ]]; then
-      continue
-    fi
-
     if [[ ( "${value}" == \"*\" && "${value}" == *\" ) || ( "${value}" == \'*\' && "${value}" == *\' ) ]]; then
       value="${value:1:-1}"
     fi
 
-    env_pairs+=("${key}=${value}")
-    existing_keys="${existing_keys}${key}|"
+    set_env_var "${key}" "${value}" "false"
   done < "${file_path}"
-
-  ENV_VARS="$(IFS=','; echo "${env_pairs[*]}")"
 }
 
 load_secret_file() {
@@ -128,6 +188,10 @@ if [[ -z "${ENV_FILE}" ]]; then
   else
     ENV_FILE=".env"
   fi
+fi
+
+if [[ -n "${ENV_VARS}" ]]; then
+  parse_env_vars_string "${ENV_VARS}"
 fi
 
 if [[ -f "${ENV_FILE}" ]]; then
@@ -191,8 +255,16 @@ if [[ "${ALLOW_UNAUTHENTICATED}" == "true" ]]; then
   DEPLOY_ARGS+=("--allow-unauthenticated")
 fi
 
-if [[ -n "${ENV_VARS}" ]]; then
-  DEPLOY_ARGS+=("--set-env-vars" "${ENV_VARS}")
+if [[ "${#ENV_KEYS[@]}" -gt 0 ]]; then
+  ENV_VARS_FILE="$(mktemp -t env-vars-XXXX.yaml)"
+  for i in "${!ENV_KEYS[@]}"; do
+    key="${ENV_KEYS[$i]}"
+    value="${ENV_VALUES[$i]}"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s: "%s"\n' "${key}" "${value}" >> "${ENV_VARS_FILE}"
+  done
+  DEPLOY_ARGS+=("--env-vars-file" "${ENV_VARS_FILE}")
 fi
 
 if [[ -n "${SECRET_VARS}" ]]; then
@@ -205,6 +277,10 @@ fi
 
 if [[ -n "${CLOUDSQL_INSTANCE}" ]]; then
   DEPLOY_ARGS+=("--add-cloudsql-instances" "${CLOUDSQL_INSTANCE}")
+fi
+
+if [[ -n "${ENV_VARS_FILE}" ]]; then
+  trap 'rm -f "${ENV_VARS_FILE}"' EXIT
 fi
 
 gcloud run deploy "${DEPLOY_ARGS[@]}"
