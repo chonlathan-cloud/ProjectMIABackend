@@ -3,7 +3,8 @@ from firebase_admin import credentials, auth
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from src.config import settings
-from typing import Dict
+from typing import Dict, Any
+import jwt
 
 
 # Initialize Firebase Admin SDK
@@ -69,3 +70,60 @@ async def get_current_user(
             detail=f"Authentication failed: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def get_auth_context(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> Dict[str, Any]:
+    """
+    Verify Firebase token first; fallback to LINE-issued JWT.
+
+    Returns:
+        Dict with auth type and identity info.
+        - Firebase: {"auth": "firebase", "uid": ..., "email": ...}
+        - LINE: {"auth": "line", "user_id": ..., "shop_id": ..., "role": ..., "provider": ...}
+    """
+    token = credentials.credentials
+
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return {
+            "auth": "firebase",
+            "uid": decoded_token["uid"],
+            "email": decoded_token.get("email"),
+            "name": decoded_token.get("name"),
+            "picture": decoded_token.get("picture"),
+        }
+    except Exception:
+        pass
+
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            issuer=settings.jwt_issuer,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid authentication token: {exc}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = payload.get("user_id")
+    shop_id = payload.get("shop_id")
+    if not user_id or not shop_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return {
+        "auth": "line",
+        "user_id": user_id,
+        "shop_id": shop_id,
+        "role": payload.get("role"),
+        "provider": payload.get("provider"),
+    }

@@ -1,5 +1,4 @@
 from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel, Part
 import vertexai
 from src.config import settings
 from typing import Dict, Any, List
@@ -17,6 +16,18 @@ class AIService:
     """Service for Vertex AI operations."""
     
     def __init__(self):
+        try:
+            from vertexai.generative_models import GenerativeModel, Part
+        except ImportError:
+            try:
+                from vertexai.preview.generative_models import GenerativeModel, Part
+            except ImportError as exc:
+                raise ImportError(
+                    "vertexai GenerativeModel not available. "
+                    "Upgrade google-cloud-aiplatform or adjust imports."
+                ) from exc
+
+        self._part_class = Part
         self.model = GenerativeModel(settings.vertex_ai_model)
         self.embedding_model_name = f"projects/{settings.google_cloud_project}/locations/{settings.vertex_ai_location}/publishers/google/models/{settings.vertex_ai_embedding_model}"
     
@@ -150,7 +161,7 @@ Do not include any explanation, only the JSON."""
         """
         try:
             # Create a Part from the file content
-            document_part = Part.from_data(data=file_content, mime_type=mime_type)
+            document_part = self._part_class.from_data(data=file_content, mime_type=mime_type)
             
             # Use Gemini to extract text
             prompt = "Extract all text from this document. Return only the text content, no explanations."

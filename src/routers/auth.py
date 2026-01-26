@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 import jwt
 import httpx
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.database import get_session
 from src.jwt_utils import create_access_token
@@ -127,7 +127,19 @@ async def auth_line_bootstrap(
         "shop_id": shop_id,
         "typ": "line_login_state",
         "iss": settings.jwt_issuer,
-        "exp": int((datetime.utcnow() + timedelta(minutes=10)).timestamp()),
+        "exp": int((datetime.now(timezone.utc) + timedelta(minutes=10)).timestamp()),
+    }
+    state_token = jwt.encode(state_payload, settings.jwt_secret, algorithm="HS256")
+    login_url = _build_line_login_url(state_token)
+    return {"loginUrl": login_url}
+
+
+@router.post("/line/login-url")
+async def auth_line_login_url() -> Dict:
+    state_payload = {
+        "typ": "line_login_state",
+        "iss": settings.jwt_issuer,
+        "exp": int((datetime.now(timezone.utc) + timedelta(minutes=10)).timestamp()),
     }
     state_token = jwt.encode(state_payload, settings.jwt_secret, algorithm="HS256")
     login_url = _build_line_login_url(state_token)
@@ -271,48 +283,65 @@ async def auth_line_callback(
     if state_payload.get("typ") != "line_login_state":
         raise HTTPException(status_code=401, detail="Invalid state type")
 
-    shop_id = state_payload.get("shop_id")
-    if not shop_id:
-        raise HTTPException(status_code=400, detail="Missing shop_id")
-
     profile = await _fetch_line_profile(code)
     line_user_id = profile.get("userId")
     if not line_user_id:
         raise HTTPException(status_code=400, detail="Missing line user id")
 
-    member_stmt = (
-        select(ShopMember)
-        .where(ShopMember.shop_id == shop_id)
-        .where(ShopMember.user_id == line_user_id)
-        .where(ShopMember.auth_provider == "line")
-    )
-    member_result = await session.execute(member_stmt)
-    member = member_result.scalar_one_or_none()
-
-    if not member:
-        member = ShopMember(
-            shop_id=shop_id,
-            user_id=line_user_id,
-            role="owner",
-            auth_provider="line",
+    shop_id = state_payload.get("shop_id")
+    if shop_id:
+        member_stmt = (
+            select(ShopMember)
+            .where(ShopMember.shop_id == shop_id)
+            .where(ShopMember.user_id == line_user_id)
+            .where(ShopMember.auth_provider == "line")
         )
-        session.add(member)
-        await session.commit()
-        await session.refresh(member)
+        member_result = await session.execute(member_stmt)
+        member = member_result.scalar_one_or_none()
+
+        if not member:
+            member = ShopMember(
+                shop_id=shop_id,
+                user_id=line_user_id,
+                role="owner",
+                auth_provider="line",
+            )
+            session.add(member)
+            await session.commit()
+            await session.refresh(member)
+        selected_shop_id = member.shop_id
+        selected_role = member.role
+    else:
+        rows_stmt = (
+            select(ShopMember, Shop)
+            .join(Shop, Shop.shop_id == ShopMember.shop_id)
+            .where(ShopMember.user_id == line_user_id)
+            .where(ShopMember.auth_provider == "line")
+            .order_by(ShopMember.created_at.desc())
+        )
+        rows_result = await session.execute(rows_stmt)
+        rows = rows_result.all()
+        if not rows:
+            base = settings.frontend_base_url.rstrip("/")
+            return RedirectResponse(url=f"{base}/line-login?error=no_shop")
+
+        member, shop = rows[0]
+        selected_shop_id = shop.shop_id
+        selected_role = member.role
 
     token = create_access_token(
         {
-            "user_id": member.user_id,
-            "shop_id": member.shop_id,
-            "role": member.role,
-            "provider": member.auth_provider,
+            "user_id": line_user_id,
+            "shop_id": selected_shop_id,
+            "role": selected_role,
+            "provider": "line",
         }
     )
 
     base = settings.frontend_base_url.rstrip("/")
     redirect_url = (
         f"{base}/line-login?token={urllib.parse.quote(token)}"
-        f"&shopId={urllib.parse.quote(shop_id)}"
+        f"&shopId={urllib.parse.quote(selected_shop_id)}"
         f"&lineUserId={urllib.parse.quote(line_user_id)}"
     )
     return RedirectResponse(url=redirect_url)

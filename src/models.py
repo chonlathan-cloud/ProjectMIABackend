@@ -38,6 +38,16 @@ class ShopSite(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ShopPublication(SQLModel, table=True):
+    """Publish status for shop public website."""
+    __tablename__ = "shop_publications"
+
+    shop_id: str = Field(foreign_key="shops.shop_id", primary_key=True)
+    is_published: bool = Field(default=False)
+    published_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Customer(SQLModel, table=True):
     """Customer/LINE user profiles linked to shops."""
     __tablename__ = "customers"

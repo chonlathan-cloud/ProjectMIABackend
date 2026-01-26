@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from src.config import settings
 from src.database import init_db
-from src.routers import auth, stores, inbox, sites, orders, ai_mcp
+from src.routers import auth, stores, inbox, sites, orders, ai_mcp, public_sites
 from firebase_admin.exceptions import FirebaseError
 
 
@@ -88,6 +88,7 @@ app.include_router(inbox.router, prefix=settings.api_prefix)
 app.include_router(sites.router, prefix=settings.api_prefix)
 app.include_router(orders.router, prefix=settings.api_prefix)
 app.include_router(ai_mcp.router)  # No prefix for MCP routes
+app.include_router(public_sites.router, prefix=settings.api_prefix)
 
 
 if __name__ == "__main__":

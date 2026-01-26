@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
 import jwt
@@ -7,7 +7,7 @@ from src.config import settings
 
 
 def create_access_token(payload: Dict[str, Any]) -> str:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     data = {
         **payload,
         "iss": settings.jwt_issuer,
