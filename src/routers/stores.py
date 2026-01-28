@@ -13,7 +13,9 @@ from src.models import (
     Customer,
     ChatEvent,
     Product,
+    ShopMember,
 )
+from src.access import user_can_access_shop
 from typing import Dict, Any
 import uuid
 
@@ -54,10 +56,26 @@ async def get_user_stores(
         List of stores filtered by owner_uid
     """
     # Query stores by owner_uid
-    statement = select(Shop).where(Shop.owner_uid == user["uid"])
-    result = await session.execute(statement)
-    stores = result.scalars().all()
-    payload = [serialize_store(store) for store in stores]
+    owner_statement = select(Shop).where(Shop.owner_uid == user["uid"])
+    owner_result = await session.execute(owner_statement)
+    owner_stores = owner_result.scalars().all()
+
+    member_stores = []
+    if user.get("provider") == "line":
+        member_statement = (
+            select(Shop)
+            .join(ShopMember, ShopMember.shop_id == Shop.shop_id)
+            .where(ShopMember.user_id == user["uid"])
+            .where(ShopMember.auth_provider == "line")
+        )
+        member_result = await session.execute(member_statement)
+        member_stores = member_result.scalars().all()
+
+    merged = {store.shop_id: store for store in owner_stores}
+    for store in member_stores:
+        merged[store.shop_id] = store
+
+    payload = [serialize_store(store) for store in merged.values()]
 
     return {
         "success": True,
@@ -133,7 +151,7 @@ async def save_line_credentials(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to modify this store"
@@ -175,7 +193,7 @@ async def get_line_credentials(
     if not shop:
         raise HTTPException(status_code=404, detail="Store not found")
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # 3. ดึง Config ออกมา (ถ้าไม่มีให้คืนค่าว่าง)
@@ -217,7 +235,7 @@ async def update_ai_settings(
     result = await session.execute(statement)
     shop = result.scalar_one_or_none()
     
-    if not shop or shop.owner_uid != user["uid"]:
+    if not shop or not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(status_code=403, detail="Permission denied")
         
     # Merge or overwrite settings
@@ -243,7 +261,7 @@ async def get_store_stats(
     if not shop:
         raise HTTPException(status_code=404, detail="Store not found")
 
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Count total customers for shop
@@ -288,7 +306,7 @@ async def get_onboarding_profile(
     if not shop:
         raise HTTPException(status_code=404, detail="Store not found")
 
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     profile = shop.business_profile or {}

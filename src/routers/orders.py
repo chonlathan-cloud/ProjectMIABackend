@@ -4,6 +4,7 @@ from sqlmodel import select
 from src.database import get_session
 from src.security import get_current_user
 from src.models import Order, Shop, OrderCreate, OrderResponse, OrderStatusUpdate
+from src.access import user_can_access_shop
 from typing import Dict, List
 from datetime import datetime
 import uuid
@@ -41,7 +42,7 @@ async def get_orders(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this store"
@@ -88,7 +89,7 @@ async def create_order(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to create orders for this store"
@@ -147,7 +148,7 @@ async def update_order_status(
     shop_result = await session.execute(shop_statement)
     shop = shop_result.scalar_one_or_none()
     
-    if not shop or shop.owner_uid != user["uid"]:
+    if not shop or not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to modify this order"

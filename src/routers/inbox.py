@@ -9,6 +9,7 @@ from src.models import (
     Customer, ChatEvent, Shop,
     CustomerResponse, ChatEventResponse, MessageSendRequest
 )
+from src.access import user_can_access_shop
 from src.services.pubsub_service import pubsub_service
 from typing import Any, Dict, List
 from datetime import datetime
@@ -49,7 +50,7 @@ async def get_customers(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this store"
@@ -123,7 +124,7 @@ async def get_chat_history(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this store"
@@ -189,7 +190,7 @@ async def stream_messages(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this store"
@@ -249,7 +250,7 @@ async def send_message(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this store"

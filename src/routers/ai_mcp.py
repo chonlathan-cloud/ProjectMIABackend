@@ -19,6 +19,7 @@ from src.services.storage_service import storage_service
 from typing import Dict
 import uuid # ✅ เพิ่ม uuid สำหรับ gen id
 import base64
+from src.access import user_can_access_shop
 
 router = APIRouter(tags=["AI & MCP"])
 
@@ -36,7 +37,7 @@ async def generate_broadcast_message(
     
     if not shop:
         raise HTTPException(status_code=404, detail="Store not found")
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # ✅ ส่วนดึงสินค้าจริง (ถูกต้องแล้ว)
@@ -81,7 +82,7 @@ async def upload_line_image(
 
     if not shop:
         raise HTTPException(status_code=404, detail="Store not found")
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     allowed_types = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
@@ -128,7 +129,7 @@ async def upload_knowledge_file(
         shop_statement = select(Shop).where(Shop.shop_id == storeId)
         shop_result = await session.execute(shop_statement)
         shop = shop_result.scalar_one_or_none()
-        if not shop or shop.owner_uid != user["uid"]:
+        if not shop or not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
              raise HTTPException(status_code=403, detail="Permission denied")
 
     # Validate file type

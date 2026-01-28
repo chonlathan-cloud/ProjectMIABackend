@@ -48,6 +48,9 @@ async def get_current_user(
             "email": decoded_token.get("email"),
             "name": decoded_token.get("name"),
             "picture": decoded_token.get("picture"),
+            "provider": decoded_token.get("provider"),
+            "shop_id": decoded_token.get("shop_id"),
+            "role": decoded_token.get("role"),
         }
         
         return user_info

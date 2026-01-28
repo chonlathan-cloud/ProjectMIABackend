@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from src.database import get_session
 from src.security import get_current_user, get_auth_context
+from src.access import user_can_access_shop
 from src.models import ShopSite, Shop, SiteConfigRequest, SiteConfigResponse, ShopPublication, ShopMember
 from typing import Dict, Optional, Any
 from datetime import datetime
@@ -102,7 +103,7 @@ async def get_site_config(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this store"
@@ -173,7 +174,7 @@ async def update_site_draft(
             detail="Store not found"
         )
     
-    if shop.owner_uid != user["uid"]:
+    if not await user_can_access_shop(session, shop, user, roles={"owner", "staff"}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to modify this store"

@@ -8,6 +8,7 @@ import jwt
 import httpx
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from firebase_admin import auth as firebase_auth
 
 from src.database import get_session
 from src.jwt_utils import create_access_token, create_refresh_token
@@ -40,15 +41,21 @@ class RefreshTokenResponse(BaseModel):
     token: str
 
 
+class LineFirebaseRequest(BaseModel):
+    token: Optional[str] = None
+    shopId: Optional[str] = None
+
+
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     max_age = settings.jwt_refresh_days * 24 * 60 * 60
+    same_site = settings.cookie_samesite.lower() if settings.cookie_samesite else None
     response.set_cookie(
         key=settings.refresh_cookie_name,
         value=refresh_token,
         max_age=max_age,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite,
+        samesite=same_site,
         path="/",
     )
 
@@ -79,6 +86,21 @@ def _build_line_login_url(state: str) -> str:
         "scope": "profile openid",
     }
     return f"{base}?{urllib.parse.urlencode(params)}"
+
+
+def _decode_line_access_token(token: str) -> Dict:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            issuer=settings.jwt_issuer,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+    if payload.get("provider") != "line":
+        raise HTTPException(status_code=401, detail="Invalid token provider")
+    return payload
 
 
 async def _fetch_line_profile(code: str) -> Dict:
@@ -464,3 +486,66 @@ async def refresh_access_token(request: Request) -> JSONResponse:
     response = JSONResponse({"token": token})
     _set_refresh_cookie(response, create_refresh_token(access_payload))
     return response
+
+
+@router.post("/line/firebase")
+async def auth_line_firebase(
+    payload: LineFirebaseRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> Dict:
+    auth_header = request.headers.get("Authorization", "")
+    bearer_token = ""
+    if auth_header.lower().startswith("bearer "):
+        bearer_token = auth_header.split(" ", 1)[1].strip()
+
+    raw_token = payload.token or bearer_token
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Missing line token")
+
+    access_payload = _decode_line_access_token(raw_token)
+    line_user_id = access_payload.get("user_id")
+    if not line_user_id:
+        raise HTTPException(status_code=401, detail="Missing line user id")
+
+    shop_id = payload.shopId or access_payload.get("shop_id")
+    if shop_id:
+        member_stmt = (
+            select(ShopMember)
+            .where(ShopMember.user_id == line_user_id)
+            .where(ShopMember.shop_id == shop_id)
+            .where(ShopMember.auth_provider == "line")
+        )
+        member_result = await session.execute(member_stmt)
+        member = member_result.scalar_one_or_none()
+        if not member:
+            raise HTTPException(status_code=403, detail="No shop access for this LINE user")
+        role = member.role
+    else:
+        member_stmt = (
+            select(ShopMember)
+            .where(ShopMember.user_id == line_user_id)
+            .where(ShopMember.auth_provider == "line")
+            .order_by(ShopMember.created_at.desc())
+        )
+        member_result = await session.execute(member_stmt)
+        member = member_result.scalars().first()
+        if not member:
+            raise HTTPException(status_code=403, detail="No shop access for this LINE user")
+        shop_id = member.shop_id
+        role = member.role
+
+    custom_token = firebase_auth.create_custom_token(
+        line_user_id,
+        developer_claims={
+            "shop_id": shop_id,
+            "role": role,
+            "provider": "line",
+        },
+    )
+
+    return {
+        "firebaseToken": custom_token.decode("utf-8"),
+        "shopId": shop_id,
+        "role": role,
+    }
