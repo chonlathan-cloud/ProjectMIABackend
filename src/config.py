@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_issuer: str = "mia-core"
     jwt_exp_minutes: int = 60
+    jwt_refresh_days: int = 7
+    refresh_cookie_name: str = "cb_refresh_token"
+    cookie_secure: bool = True
+    cookie_samesite: str = "none"
 
     # LINE Login
     line_login_channel_id: str = ""

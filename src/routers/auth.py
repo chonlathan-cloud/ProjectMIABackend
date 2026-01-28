@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -10,7 +10,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 from src.database import get_session
-from src.jwt_utils import create_access_token
+from src.jwt_utils import create_access_token, create_refresh_token
 from src.models import Shop, ShopMember
 from src.security import get_current_user
 from src.config import settings
@@ -34,6 +34,23 @@ class LineAuthSelectRequest(BaseModel):
 
 class LineBootstrapRequest(BaseModel):
     token: str
+
+
+class RefreshTokenResponse(BaseModel):
+    token: str
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    max_age = settings.jwt_refresh_days * 24 * 60 * 60
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=refresh_token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        path="/",
+    )
 
 
 def _decode_signed_link_token(token: str) -> Dict:
@@ -164,22 +181,23 @@ async def auth_line_login(
 
         if member_row:
             member, shop = member_row
-            token = create_access_token(
-                {
-                    "user_id": member.user_id,
-                    "shop_id": member.shop_id,
-                    "role": member.role,
-                    "provider": member.auth_provider,
-                }
-            )
-            return {
+            access_payload = {
+                "user_id": member.user_id,
+                "shop_id": member.shop_id,
+                "role": member.role,
+                "provider": member.auth_provider,
+            }
+            token = create_access_token(access_payload)
+            response = JSONResponse({
                 "success": True,
                 "requiresSelection": False,
                 "token": token,
                 "shopId": shop.shop_id,
                 "shopName": shop.name,
                 "role": member.role,
-            }
+            })
+            _set_refresh_cookie(response, create_refresh_token(access_payload))
+            return response
 
         shop_stmt = select(Shop).where(Shop.shop_id == payload.shopId)
         shop_result = await session.execute(shop_stmt)
@@ -197,22 +215,23 @@ async def auth_line_login(
         await session.commit()
         await session.refresh(member)
 
-        token = create_access_token(
-            {
-                "user_id": member.user_id,
-                "shop_id": member.shop_id,
-                "role": member.role,
-                "provider": member.auth_provider,
-            }
-        )
-        return {
+        access_payload = {
+            "user_id": member.user_id,
+            "shop_id": member.shop_id,
+            "role": member.role,
+            "provider": member.auth_provider,
+        }
+        token = create_access_token(access_payload)
+        response = JSONResponse({
             "success": True,
             "requiresSelection": False,
             "token": token,
             "shopId": shop.shop_id,
             "shopName": shop.name,
             "role": member.role,
-        }
+        })
+        _set_refresh_cookie(response, create_refresh_token(access_payload))
+        return response
 
     statement = (
         select(ShopMember, Shop)
@@ -242,22 +261,23 @@ async def auth_line_login(
         }
 
     member, shop = rows[0]
-    token = create_access_token(
-        {
-            "user_id": member.user_id,
-            "shop_id": member.shop_id,
-            "role": member.role,
-            "provider": member.auth_provider,
-        }
-    )
-    return {
+    access_payload = {
+        "user_id": member.user_id,
+        "shop_id": member.shop_id,
+        "role": member.role,
+        "provider": member.auth_provider,
+    }
+    token = create_access_token(access_payload)
+    response = JSONResponse({
         "success": True,
         "requiresSelection": False,
         "token": token,
         "shopId": shop.shop_id,
         "shopName": shop.name,
         "role": member.role,
-    }
+    })
+    _set_refresh_cookie(response, create_refresh_token(access_payload))
+    return response
 
 
 @router.get("/line/callback")
@@ -329,14 +349,13 @@ async def auth_line_callback(
         selected_shop_id = shop.shop_id
         selected_role = member.role
 
-    token = create_access_token(
-        {
-            "user_id": line_user_id,
-            "shop_id": selected_shop_id,
-            "role": selected_role,
-            "provider": "line",
-        }
-    )
+    access_payload = {
+        "user_id": line_user_id,
+        "shop_id": selected_shop_id,
+        "role": selected_role,
+        "provider": "line",
+    }
+    token = create_access_token(access_payload)
 
     base = settings.frontend_base_url.rstrip("/")
     redirect_url = (
@@ -344,7 +363,9 @@ async def auth_line_callback(
         f"&shopId={urllib.parse.quote(selected_shop_id)}"
         f"&lineUserId={urllib.parse.quote(line_user_id)}"
     )
-    return RedirectResponse(url=redirect_url)
+    response = RedirectResponse(url=redirect_url)
+    _set_refresh_cookie(response, create_refresh_token(access_payload))
+    return response
 
 
 @router.post("/line/select")
@@ -379,35 +400,67 @@ async def auth_line_select(
         await session.commit()
         await session.refresh(member)
 
-        token = create_access_token(
-            {
-                "user_id": member.user_id,
-                "shop_id": member.shop_id,
-                "role": member.role,
-                "provider": member.auth_provider,
-            }
-        )
-        return {
-            "success": True,
-            "token": token,
-            "shopId": shop.shop_id,
-            "shopName": shop.name,
-            "role": member.role,
-        }
-
-    member, shop = row
-    token = create_access_token(
-        {
+        access_payload = {
             "user_id": member.user_id,
             "shop_id": member.shop_id,
             "role": member.role,
             "provider": member.auth_provider,
         }
-    )
-    return {
+        token = create_access_token(access_payload)
+        response = JSONResponse({
+            "success": True,
+            "token": token,
+            "shopId": shop.shop_id,
+            "shopName": shop.name,
+            "role": member.role,
+        })
+        _set_refresh_cookie(response, create_refresh_token(access_payload))
+        return response
+
+    member, shop = row
+    access_payload = {
+        "user_id": member.user_id,
+        "shop_id": member.shop_id,
+        "role": member.role,
+        "provider": member.auth_provider,
+    }
+    token = create_access_token(access_payload)
+    response = JSONResponse({
         "success": True,
         "token": token,
         "shopId": shop.shop_id,
         "shopName": shop.name,
         "role": member.role,
+    })
+    _set_refresh_cookie(response, create_refresh_token(access_payload))
+    return response
+
+
+@router.post("/refresh", response_model=RefreshTokenResponse)
+async def refresh_access_token(request: Request) -> JSONResponse:
+    refresh_token = request.cookies.get(settings.refresh_cookie_name)
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+    try:
+        payload = jwt.decode(
+            refresh_token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            issuer=settings.jwt_issuer,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid refresh token: {exc}")
+
+    if payload.get("typ") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid refresh token type")
+
+    access_payload = {
+        "user_id": payload.get("user_id"),
+        "shop_id": payload.get("shop_id"),
+        "role": payload.get("role"),
+        "provider": payload.get("provider"),
     }
+    token = create_access_token(access_payload)
+    response = JSONResponse({"token": token})
+    _set_refresh_cookie(response, create_refresh_token(access_payload))
+    return response
