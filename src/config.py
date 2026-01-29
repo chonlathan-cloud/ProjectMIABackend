@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Debug
     debug: bool = True
     port: int = 8000
+    db_init_retries: int = 5
+    db_init_delay_seconds: float = 1.0
+    db_init_backoff: float = 2.0
+    db_init_strict: bool = False
 
     # Vertex AI
     vertex_ai_location: str = "us-central1"

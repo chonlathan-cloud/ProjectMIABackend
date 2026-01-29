@@ -15,8 +15,11 @@ async def lifespan(app: FastAPI):
     """
     # Startup: Initialize database
     print("🚀 Starting MIA-Core Backend...")
-    await init_db()
-    print("✅ Database initialized")
+    db_ready = await init_db()
+    if db_ready:
+        print("✅ Database initialized")
+    else:
+        print("⚠️ Database initialization failed. Continuing startup without DB.")
     
     yield
     
