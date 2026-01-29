@@ -60,6 +60,20 @@ async def get_user_stores(
     owner_result = await session.execute(owner_statement)
     owner_stores = owner_result.scalars().all()
 
+    email_stores = []
+    email = user.get("email")
+    if email:
+        email_statement = select(Shop).where(Shop.owner_uid == email)
+        email_result = await session.execute(email_statement)
+        email_stores = email_result.scalars().all()
+        if email_stores:
+            now = datetime.utcnow()
+            for store in email_stores:
+                store.owner_uid = user["uid"]
+                store.updated_at = now
+                session.add(store)
+            await session.commit()
+
     member_stores = []
     if user.get("provider") == "line":
         member_statement = (
@@ -72,6 +86,8 @@ async def get_user_stores(
         member_stores = member_result.scalars().all()
 
     merged = {store.shop_id: store for store in owner_stores}
+    for store in email_stores:
+        merged[store.shop_id] = store
     for store in member_stores:
         merged[store.shop_id] = store
 
